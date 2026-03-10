@@ -26,7 +26,21 @@ enum Rank {
     Ace,
 }
 
-#[derive(Debug)]
+#[derive(Eq, PartialEq, Hash, Clone, Copy, Debug)]
+enum HandType {
+    HighCard,
+    Pair,
+    TwoPair,
+    ThreeOfAKind,
+    Straight,
+    Flush,
+    FullHouse,
+    FourOfAKind,
+    StraightFlush,
+    RoyalFlush,
+}
+
+#[derive(Debug, PartialEq)]
 struct Card {
     rank: Rank,
     suit: Suit,
@@ -75,13 +89,20 @@ impl Card {
 }
 fn main() {
     let hand = Vec::from([Card::from_str("ah"), Card::from_str("ad")]);
-    let board = Vec::from([Card::from_str("ac"), Card::from_str("5d")]);
+    let board = Vec::from([
+        Card::from_str("ac"),
+        Card::from_str("5d"),
+        Card::from_str("as"),
+    ]);
 
     println!("{}", eval(&hand, &board));
 }
 
 fn eval(hand: &Vec<Card>, board: &Vec<Card>) -> u32 {
     let mut comb = hand.iter().collect::<Vec<&Card>>();
+    let mut hand_type: HandType = HandType::HighCard;
+    let mut best_cards: Vec<&Card>;
+
     comb.extend(board);
 
     comb.sort_by(|a, b| {
@@ -92,16 +113,56 @@ fn eval(hand: &Vec<Card>, board: &Vec<Card>) -> u32 {
 
     // Order of hands: best to worst
 
-    let ranks = comb.iter().map(|x| x.rank).collect::<Vec<Rank>>();
-    let mut ranks_map: HashMap<&Rank, i32> = HashMap::new();
+    let mut ranks_count_map: HashMap<Rank, (u32, Vec<&Card>)> = HashMap::new();
 
-    for rank in &ranks {
-        *ranks_map.entry(rank).or_insert(0) += 1;
+    for card in &comb {
+        let entry = ranks_count_map.entry(card.rank).or_insert((0, Vec::new()));
+        entry.0 += 1;
+        entry.1.push(*card);
     }
 
-    let ranks_count = ranks_map.into_iter().collect::<Vec<(&Rank, i32)>>();
+    let mut counts_rank_map: HashMap<u32, Vec<Rank>> = HashMap::new();
 
-    println!("{:?}", ranks_count);
+    for (rank, (count, _)) in &ranks_count_map {
+        counts_rank_map.entry(*count).or_default().push(*rank);
+    }
+
+    if counts_rank_map.contains_key(&4) {
+        // Four of a kind
+
+        let target_rank = &counts_rank_map.get(&4).unwrap()[0];
+        let mut four_of_a_kind: Vec<&Card> = ranks_count_map.get(target_rank).unwrap().1.to_vec();
+
+        let other: Vec<&Card> = comb
+            .iter()
+            .filter(|c| !four_of_a_kind.contains(c))
+            .copied()
+            .collect();
+
+        four_of_a_kind.push(other[0]);
+        best_cards = four_of_a_kind.iter().copied().collect();
+        hand_type = HandType::FourOfAKind;
+
+        println!("{:?}", four_of_a_kind)
+    } else if counts_rank_map.contains_key(&3) {
+        // Full house or three of a kind
+
+        if counts_rank_map.contains_key(&2) {
+            // Full house
+
+            let three_rank = &counts_rank_map.get(&3).unwrap()[0];
+            let pair_rank = &counts_rank_map.get(&2).unwrap()[0];
+
+            let mut three_of_a_kind: Vec<&Card> =
+                ranks_count_map.get(three_rank).unwrap().1.to_vec();
+
+            let pair: Vec<&Card> = ranks_count_map.get(pair_rank).unwrap().1.to_vec();
+        } else {
+            // Three of a kind
+        }
+    }
+
+    // println!("{:?}", ranks_count_map);
 
     1
 }
