@@ -167,6 +167,15 @@ impl CardTracker {
         true
     }
 
+    fn get_with_rank(&self, rank: Rank) -> Card {
+        self.internal_cards
+            .iter()
+            .filter(|c| c.rank == rank)
+            .take(1)
+            .copied()
+            .collect::<Vec<_>>()[0]
+    }
+
     fn cards_without(&self, filter: &Vec<Card>, take: usize) -> Vec<Card> {
         self.internal_cards
             .iter()
@@ -191,24 +200,60 @@ fn main() {
     for rank in 0..13 {
         for suit in 0..4 {
             all_cards.push(Card {
-                rank: unsafe { std::mem::transmute(rank as u8) },
-                suit: unsafe { std::mem::transmute(suit as u8) },
+                rank: unsafe { std::mem::transmute::<u8, Rank>(rank as u8) },
+                suit: unsafe { std::mem::transmute::<u8, Suit>(suit as u8) },
             });
         }
     }
 
     let mut out: Vec<Vec<usize>> = Vec::new();
 
-    comb(&mut Vec::new(), 0, 51, 5, &mut out);
+    let hand = vec![Card::from_str("ah"), Card::from_str("ad")];
+    all_cards = all_cards
+        .iter()
+        .filter(|x| !hand.contains(x))
+        .copied()
+        .collect();
 
-    for c in out {
+    comb(&mut Vec::new(), 0, all_cards.len() - 1, 5, &mut out);
+    let mut hand_counter: HashMap<HandType, u64> = HashMap::new();
+
+    for c in &out {
         let cards: Vec<Card> = c.iter().map(|x| all_cards[*x]).collect();
 
-        eval(&cards, &Vec::new());
+        let (_, hand_type) = eval(&hand, &cards);
+
+        *hand_counter.entry(hand_type).or_default() += 1;
     }
+
+    println!("{:?}", hand_counter);
+
+    for hand_type in (0..10).map(|n| unsafe { std::mem::transmute::<u8, HandType>(n as u8) }) {
+        println!(
+            "{:?}: {} ({}%)",
+            hand_type,
+            *hand_counter.get(&hand_type).unwrap_or(&0),
+            (*hand_counter.get(&hand_type).unwrap_or(&0) as f64 / out.len() as f64
+                * 100_f64
+                * 100_f64)
+                .round()
+                / 100_f64
+        )
+    }
+
+    // eval(
+    //     &vec![
+    //         Card::from_str("4d"),
+    //         Card::from_str("2d"),
+    //         Card::from_str("3h"),
+    //         Card::from_str("ad"),
+    //         Card::from_str("5d"),
+    //     ],
+    //     &vec![],
+    // );
 }
 
-fn eval(hand: &Vec<Card>, board: &Vec<Card>) -> u64 {
+fn eval(hand: &Vec<Card>, board: &Vec<Card>) -> (u64, HandType) {
     let mut comb = hand.to_vec();
     let mut hand_type: HandType = HandType::HighCard;
     let mut best_cards: Vec<Card> = Vec::new();
@@ -222,7 +267,6 @@ fn eval(hand: &Vec<Card>, board: &Vec<Card>) -> u64 {
     });
 
     // Order of hands: best to worst
-
     let card_tracker = CardTracker::from(comb.as_slice());
 
     if card_tracker.contains(4) {
@@ -293,9 +337,81 @@ fn eval(hand: &Vec<Card>, board: &Vec<Card>) -> u64 {
                 continue;
             }
 
+            // Search for straight = Straight Flush, if starts with Ace, Royal flush!!
+
+            let mut l = 0;
+            let mut r;
+            let mut is_straight = false;
+            let mut straight_start = Rank::Ace;
+            let mut filtered_ranks = filtered.iter().map(|x| x.rank).collect::<Vec<Rank>>();
+            filtered_ranks.dedup();
+
+            while l < filtered_ranks.len() {
+                r = l;
+
+                while r < filtered_ranks.len() - 1
+                    && filtered_ranks[r] as u8 - filtered_ranks[r + 1] as u8 == 1
+                {
+                    r += 1;
+                }
+
+                if filtered_ranks[r] == Rank::Two && filtered_ranks[0] == Rank::Ace {
+                    r += 1;
+                }
+
+                if r - l + 1 >= 5 {
+                    // Straight
+                    is_straight = true;
+                    straight_start = filtered_ranks[l];
+                    break;
+                }
+
+                l = r + 1;
+            }
             best_cards.clear();
-            best_cards.extend(filtered.iter().take(5).copied().collect::<Vec<Card>>());
-            hand_type = HandType::Flush;
+
+            if is_straight {
+                if straight_start != Rank::Five {
+                    best_cards.extend(
+                        (0..5)
+                            .map(|n| straight_start as u8 - n)
+                            .map(|rank| unsafe { std::mem::transmute::<u8, Rank>(rank) })
+                            .map(|rank| Card { rank, suit })
+                            .collect::<Vec<Card>>(),
+                    );
+                } else {
+                    best_cards.extend(
+                        (0..4)
+                            .map(|n| straight_start as u8 - n)
+                            .map(|rank| unsafe { std::mem::transmute::<u8, Rank>(rank) })
+                            .map(|rank| Card { rank, suit })
+                            .collect::<Vec<Card>>(),
+                    );
+
+                    best_cards.push(Card {
+                        rank: Rank::Ace,
+                        suit,
+                    });
+                }
+
+                if straight_start == Rank::Ace {
+                    hand_type = HandType::RoyalFlush;
+
+                    println!(
+                        "{}",
+                        best_cards
+                            .iter()
+                            .map(|c| c.to_string())
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    );
+                } else {
+                    hand_type = HandType::StraightFlush;
+                }
+            } else {
+                best_cards.extend(filtered.iter().take(5).copied().collect::<Vec<Card>>());
+                hand_type = HandType::Flush;
+            }
 
             break;
         }
@@ -304,38 +420,56 @@ fn eval(hand: &Vec<Card>, board: &Vec<Card>) -> u64 {
     if hand_type < HandType::Straight {
         let mut l = 0;
         let mut r;
-        let mut is_wheel = false;
         let mut is_straight = false;
-        let mut straight_start;
+        let mut straight_start = Rank::Ace;
         let mut ranks = comb.iter().map(|x| x.rank).collect::<Vec<Rank>>();
         ranks.dedup();
 
         while l < ranks.len() {
-            r = l + 1;
+            r = l;
 
-            while r < ranks.len()
-                && (ranks[r] as i32 - ranks[r - 1] as i32 == -1
-                    || ranks[r] == Rank::Two && ranks[0] == Rank::Ace)
-            {
+            while r < ranks.len() - 1 && ranks[r] as u8 - ranks[r + 1] as u8 == 1 {
+                r += 1;
+            }
+
+            if ranks[r] == Rank::Two && ranks[0] == Rank::Ace {
                 r += 1;
             }
 
             if r - l + 1 >= 5 {
                 // Straight
-
                 is_straight = true;
-                is_wheel = r == ranks.len();
                 straight_start = ranks[l];
                 break;
             }
 
-            l = r;
+            l = r + 1;
         }
 
-        // if is_straight {
-        //     best_cards.clear();
-        //     hand_type = HandType::Straight;
-        // }
+        if is_straight {
+            best_cards.clear();
+            hand_type = HandType::Straight;
+
+            if straight_start != Rank::Five {
+                best_cards.extend(
+                    (0..5)
+                        .map(|n| straight_start as u8 - n)
+                        .map(|rank| unsafe { std::mem::transmute::<u8, Rank>(rank) })
+                        .map(|rank| card_tracker.get_with_rank(rank))
+                        .collect::<Vec<Card>>(),
+                );
+            } else {
+                best_cards.extend(
+                    (0..4)
+                        .map(|n| straight_start as u8 - n)
+                        .map(|rank| unsafe { std::mem::transmute::<u8, Rank>(rank) })
+                        .map(|rank| card_tracker.get_with_rank(rank))
+                        .collect::<Vec<Card>>(),
+                );
+
+                best_cards.push(card_tracker.get_with_rank(Rank::Ace));
+            }
+        }
     }
 
     if hand_type == HandType::HighCard {
@@ -344,11 +478,7 @@ fn eval(hand: &Vec<Card>, board: &Vec<Card>) -> u64 {
     // println!(
     //     "{:?} {}",
     //     hand_type,
-    //     best_cards
-    //         .iter()
-    //         .map(|c| c.to_string())
-    //         .collect::<Vec<_>>()
-    //         .join(" "),
+    //     best_cards.iter().map(|c| c.to_string()).collect::<Vec<_>>()
     // );
 
     if best_cards.len() == 4 {
@@ -362,7 +492,7 @@ fn eval(hand: &Vec<Card>, board: &Vec<Card>) -> u64 {
         + 15_u64.pow(5) * best_cards[0].rank as u64
         + 15_u64.pow(6) * hand_type as u64;
 
-    calc
+    (calc, hand_type)
 }
 
 fn comb(curr: &mut Vec<usize>, start: usize, end: usize, n: usize, out: &mut Vec<Vec<usize>>) {
