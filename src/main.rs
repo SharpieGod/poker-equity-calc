@@ -446,7 +446,7 @@ fn main() {
                 .unwrap_or(&0_f64);
             println!(
                 "{}: {} {}%",
-                player.player_key,
+                player.player_key + 1,
                 player.hand.map(|x| x.to_string()).join(" "),
                 (*equity / agg_result.count as f64 * 100_f64 * 100_f64).round() / 100_f64
             );
@@ -466,7 +466,7 @@ fn main() {
                         "({})",
                         tie.0
                             .iter()
-                            .map(|p| p.to_string())
+                            .map(|p| (p + 1).to_string())
                             .collect::<Vec<_>>()
                             .join("-"),
                     )
@@ -484,12 +484,12 @@ fn main() {
         if input == "p" {}
         if players
             .iter()
-            .map(|p| p.player_key.to_string())
+            .map(|p| (p.player_key + 1).to_string())
             .collect::<Vec<String>>()
             .contains(&input)
         {
             // player hands made breakdown
-            let player = &players[input.parse::<usize>().unwrap()];
+            let player = &players[input.parse::<usize>().unwrap() - 1];
             clear_screen();
 
             let mut hand_type_results: Vec<(HandType, u64)> = agg_result
@@ -503,7 +503,7 @@ fn main() {
             hand_type_results.sort_by(|a, b| a.1.cmp(&b.1).reverse());
             println!(
                 "Player {}: {}\n\n{}",
-                player.player_key,
+                player.player_key + 1,
                 player.hand.map(|x| x.to_string()).join(" "),
                 // 120 is 5 perm 5
                 hand_type_results
