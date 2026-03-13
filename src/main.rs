@@ -1,5 +1,5 @@
 use core::fmt;
-use std::collections::HashMap;
+use std::{collections::HashMap, io, time::Instant};
 
 static CARD_VALUES: [&str; 13] = [
     "2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K", "A",
@@ -205,37 +205,69 @@ struct EvalResult {
     hand_type: HandType,
 }
 
-struct TrieNode {
-    children: HashMap<Card, TrieNode>,
-    end_info: Option<HashMap<u8, EvalResult>>,
+struct ResultsManager {
+    results: HashMap<Vec<Card>, HashMap<u8, EvalResult>>,
 }
 
-impl TrieNode {
+#[derive(Debug)]
+struct AggResult {
+    hand_counter: HashMap<u8, HashMap<HandType, u64>>,
+    eq_counter: HashMap<u8, u64>,
+}
+
+impl ResultsManager {
     fn new() -> Self {
-        TrieNode {
-            children: HashMap::new(),
-            end_info: None,
+        ResultsManager {
+            results: HashMap::new(),
         }
     }
-}
 
-struct Trie {
-    root: TrieNode,
-}
+    fn insert(&mut self, board: Vec<Card>, player_key: u8, result: EvalResult) {
+        let player_map = self.results.entry(board).or_insert_with(HashMap::new);
+        player_map.insert(player_key, result);
+    }
 
-impl Trie {
-    fn insert(&mut self, card_seq: Vec<Card>, player_key: u8, result: EvalResult) {
-        let mut curr = &mut self.root;
+    fn agg(&self, board: &[Card]) -> AggResult {
+        let mut cards = board.to_vec();
+        cards.sort_by(|a, b| {
+            let a_rank = a.rank as u32;
+            let b_rank = b.rank as u32;
+            b_rank.cmp(&a_rank)
+        });
 
-        for card in card_seq {
-            curr = curr.children.entry(card).or_insert_with(TrieNode::new);
+        let mut counter: HashMap<u8, HashMap<HandType, u64>> = HashMap::new();
+        let mut eq_counter = HashMap::new();
+
+        for (board, result) in &self.results {
+            if !board.starts_with(&cards) {
+                continue;
+            }
+
+            let best_score = result.values().map(|v| v.score).max().unwrap();
+
+            for (player_key, player_result) in result {
+                *counter
+                    .entry(*player_key)
+                    .or_default()
+                    .entry(player_result.hand_type)
+                    .or_default() += 1;
+            }
+
+            let filtered = result
+                .iter()
+                .filter(|p| p.1.score == best_score)
+                .map(|p| p.0)
+                .collect::<Vec<&u8>>();
+
+            if filtered.len() == 1 {
+                *eq_counter.entry(*filtered[0]).or_default() += 1;
+            }
         }
 
-        if curr.end_info.is_none() {
-            curr.end_info = Some(HashMap::new());
+        AggResult {
+            hand_counter: counter,
+            eq_counter,
         }
-
-        curr.end_info.as_mut().unwrap().insert(player_key, result);
     }
 }
 
@@ -253,7 +285,23 @@ impl Player {
     }
 }
 
+fn take_input() -> String {
+    let mut input = String::new();
+
+    io::stdin()
+        .read_line(&mut input)
+        .expect("Failed to read line");
+
+    input.trim().to_string()
+}
+
+fn clear_screen() {
+    print!("\x1B[2J\x1B[1;1H");
+}
+
 fn main() {
+    clear_screen();
+
     let mut all_cards: Vec<Card> = Vec::new();
 
     for rank in 0..13 {
@@ -267,7 +315,7 @@ fn main() {
 
     let players = [
         Player::initiate(["ah", "2d"], 0),
-        Player::initiate(["4c", "jh"], 0),
+        Player::initiate(["4c", "jh"], 1),
     ];
 
     let player_cards: Vec<Card> = players
@@ -275,7 +323,7 @@ fn main() {
         .flat_map(|p| p.hand.iter().cloned())
         .collect();
 
-    let mut out = Vec::new();
+    let mut combinations = Vec::new();
 
     all_cards = all_cards
         .iter()
@@ -283,31 +331,79 @@ fn main() {
         .copied()
         .collect();
 
-    comb(&mut Vec::new(), 0, all_cards.len(), 5, &mut out);
-    let mut hand_counter: HashMap<HandType, u64> = HashMap::new();
+    let mut results_manager = ResultsManager::new();
 
-    let mut perms: Vec<Vec<usize>> = Vec::new();
+    comb(&mut Vec::new(), 0, all_cards.len(), 5, &mut combinations);
 
-    let mut result_trie = Trie {
-        root: TrieNode::new(),
-    };
+    let start = Instant::now();
+    println!("Loading...");
 
-    perm(&mut Vec::new(), 5, 5, &mut perms);
-
-    for c in &out {
+    for c in &combinations {
         for player in &players {
-            let cards: Vec<Card> = c.iter().map(|x| all_cards[*x]).collect();
+            let mut cards: Vec<Card> = c.iter().map(|x| all_cards[*x]).collect();
+            cards.sort_by(|a, b| {
+                let a_rank = a.rank as u32;
+                let b_rank = b.rank as u32;
+                b_rank.cmp(&a_rank)
+            });
 
             let result = eval(&player.hand, &cards);
-
-            let _ = perms.iter().map(|p| {
-                result_trie.insert(
-                    p.iter().map(|x| cards[*x]).collect(),
-                    player.player_key,
-                    result,
-                );
-            });
+            results_manager.insert(cards, player.player_key, result);
         }
+    }
+
+    println!(
+        "Finished loading in {}s",
+        (start.elapsed().as_millis() as f64 / 10_f64).round() / 100_f64
+    );
+    println!("\nPress enter to continue");
+
+    take_input();
+    let mut board: Vec<Card> = Vec::new();
+
+    loop {
+        clear_screen();
+        let start = Instant::now();
+        print!("Aggregating...");
+        let agg_result = results_manager.agg(&board);
+        clear_screen();
+
+        println!(
+            "Finished in {}s",
+            (start.elapsed().as_millis() as f64 / 10_f64).round() / 100_f64
+        );
+        println!(
+            "{}",
+            match board
+                .iter()
+                .map(|c| c.to_string())
+                .collect::<Vec<_>>()
+                .join(" ")
+            {
+                s if s.is_empty() => "No board yet.".to_string(),
+                s => s,
+            }
+        );
+
+        println!("\n");
+
+        for player in &players {
+            let equity = agg_result.eq_counter.get(&player.player_key).unwrap_or(&0);
+            println!(
+                "{} {}%",
+                player.hand.map(|x| x.to_string()).join(" "),
+                (*equity as f64 / combinations.len() as f64 * 100_f64 * 100_f64).round() / 100_f64
+            );
+
+            //         *hand_counter.get(&hand_type).unwrap_or(&0),
+            //         (*hand_counter.get(&hand_type).unwrap_or(&0) as f64 / out.len() as f64
+            //             * 100_f64
+            //             * 100_f64)
+            //             .round()
+            //             / 100_f64
+        }
+
+        take_input();
     }
 
     // for hand_type in (0..10).map(|n| unsafe { std::mem::transmute::<u8, HandType>(n as u8) }) {
@@ -587,19 +683,6 @@ fn comb(curr: &mut Vec<usize>, start: usize, end: usize, n: usize, out: &mut Vec
     for i in start..end {
         curr.push(i);
         comb(curr, i + 1, end, n, out);
-        curr.pop();
-    }
-}
-
-fn perm(curr: &mut Vec<usize>, end: usize, n: usize, out: &mut Vec<Vec<usize>>) {
-    if curr.len() == n {
-        out.push(curr.clone());
-        return;
-    }
-
-    for i in 0..end {
-        curr.push(i);
-        perm(curr, end, n, out);
         curr.pop();
     }
 }
