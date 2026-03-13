@@ -66,6 +66,24 @@ impl fmt::Display for Card {
         )
     }
 }
+
+impl fmt::Display for HandType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let s = match self {
+            HandType::HighCard => "High Card",
+            HandType::Pair => "Pair",
+            HandType::TwoPair => "Two Pair",
+            HandType::ThreeOfAKind => "Three of a Kind",
+            HandType::Straight => "Straight",
+            HandType::Flush => "Flush",
+            HandType::FullHouse => "Full House",
+            HandType::FourOfAKind => "Four of a Kind",
+            HandType::StraightFlush => "Straight Flush",
+            HandType::RoyalFlush => "Royal Flush",
+        };
+        write!(f, "{}", s)
+    }
+}
 impl Card {
     fn from_str(str: &str) -> Self {
         let suit = str.chars().nth(1).unwrap();
@@ -217,6 +235,8 @@ struct ResultsManager {
 struct AggResult {
     hand_counter: HashMap<u8, HashMap<HandType, u64>>,
     eq_counter: HashMap<u8, f64>,
+    count: u64,
+    ties: HashMap<Vec<u8>, u64>,
 }
 
 impl ResultsManager {
@@ -239,38 +259,46 @@ impl ResultsManager {
             b_rank.cmp(&a_rank)
         });
 
-        let mut counter: HashMap<u8, HashMap<HandType, u64>> = HashMap::new();
+        let mut hand_counter: HashMap<u8, HashMap<HandType, u64>> = HashMap::new();
         let mut eq_counter = HashMap::new();
+        let mut count = 0_u64;
+        let mut ties = HashMap::new();
 
         for (board, result) in &self.results {
             if !board.starts_with(&cards) {
                 continue;
             }
 
+            count += 1;
             let best_score = result.values().map(|v| v.score).max().unwrap();
 
             for (player_key, player_result) in result {
-                *counter
+                *hand_counter
                     .entry(*player_key)
                     .or_default()
                     .entry(player_result.hand_type)
                     .or_default() += 1;
             }
 
-            let winners = result
+            let mut winners = result
                 .iter()
                 .filter(|p| p.1.score == best_score)
-                .map(|p| p.0)
-                .collect::<Vec<&u8>>();
+                .map(|p| *p.0)
+                .collect::<Vec<u8>>();
 
             if winners.len() == 1 {
-                *eq_counter.entry(*winners[0]).or_insert(0_f64) += 1_f64;
+                *eq_counter.entry(winners[0]).or_insert(0_f64) += 1_f64;
+            } else {
+                winners.sort();
+                *ties.entry(winners).or_default() += 1;
             }
         }
 
         AggResult {
-            hand_counter: counter,
+            hand_counter,
             eq_counter,
+            count,
+            ties,
         }
     }
 }
@@ -365,18 +393,31 @@ fn main() {
 
     take_input();
     let mut board: Vec<Card> = Vec::new();
+    let mut needs_refresh = true;
+    let mut agg_result: AggResult = AggResult {
+        hand_counter: HashMap::new(),
+        eq_counter: HashMap::new(),
+        count: 1,
+        ties: HashMap::new(),
+    };
 
     loop {
-        clear_screen();
         let start = Instant::now();
-        print!("Aggregating...");
-        let agg_result = results_manager.agg(&board);
+
+        if needs_refresh {
+            clear_screen();
+            print!("Aggregating...");
+            agg_result = results_manager.agg(&board);
+            needs_refresh = false;
+        }
+
         clear_screen();
 
         println!(
             "Finished in {}s",
             (start.elapsed().as_millis() as f64 / 10_f64).round() / 100_f64
         );
+
         println!(
             "{}",
             match board
@@ -398,20 +439,82 @@ fn main() {
                 .get(&player.player_key)
                 .unwrap_or(&0_f64);
             println!(
-                "{} {}%",
+                "{}: {} {}%",
+                player.player_key,
                 player.hand.map(|x| x.to_string()).join(" "),
-                (*equity / combinations.len() as f64 * 100_f64 * 100_f64).round() / 100_f64
+                (*equity / agg_result.count as f64 * 100_f64 * 100_f64).round() / 100_f64
             );
-
-            //         *hand_counter.get(&hand_type).unwrap_or(&0),
-            //         (*hand_counter.get(&hand_type).unwrap_or(&0) as f64 / out.len() as f64
-            //             * 100_f64
-            //             * 100_f64)
-            //             .round()
-            //             / 100_f64
         }
 
-        take_input();
+        let mut ties = agg_result.ties.iter().collect::<Vec<_>>();
+        ties.sort_by(|a, b| a.0.len().cmp(&b.0.len()).reverse());
+
+        for tie in ties {
+            println!(
+                "{}-way tie{}: {}%",
+                tie.0.len(),
+                if tie.0.len() == players.len() {
+                    String::new()
+                } else {
+                    format!(
+                        "({})",
+                        tie.0
+                            .iter()
+                            .map(|p| p.to_string())
+                            .collect::<Vec<_>>()
+                            .join("-"),
+                    )
+                },
+                (*tie.1 as f64 / agg_result.count as f64 * 100_f64 * 100_f64).round() / 100_f64
+            );
+        }
+
+        println!();
+        let mut input;
+
+        input = take_input();
+
+        if input == "n" {}
+        if input == "p" {}
+        if players
+            .iter()
+            .map(|p| p.player_key.to_string())
+            .collect::<Vec<String>>()
+            .contains(&input)
+        {
+            // player hands made breakdown
+            let player = &players[input.parse::<usize>().unwrap()];
+            clear_screen();
+
+            let mut hand_type_results: Vec<(HandType, u64)> = agg_result
+                .hand_counter
+                .get(&player.player_key)
+                .unwrap()
+                .iter()
+                .map(|(&hand_type, &count)| (hand_type, count))
+                .collect();
+
+            hand_type_results.sort_by(|a, b| a.1.cmp(&b.1).reverse());
+            println!(
+                "Player {}: {}\n\n{}",
+                player.player_key,
+                player.hand.map(|x| x.to_string()).join(" "),
+                // 120 is 5 perm 5
+                hand_type_results
+                    .iter()
+                    .map(|(hand_type, counter)| format!(
+                        "{:<17} {:>5.2}% ({})",
+                        format!("{}:", hand_type),
+                        (*counter as f64 / agg_result.count as f64 * 100_f64 * 100_f64).round()
+                            / 100_f64,
+                        counter * 120
+                    ))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            );
+
+            take_input();
+        }
     }
 
     // for hand_type in (0..10).map(|n| unsafe { std::mem::transmute::<u8, HandType>(n as u8) }) {
