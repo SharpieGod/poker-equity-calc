@@ -48,7 +48,7 @@ enum HandType {
     RoyalFlush,
 }
 
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy, Hash, Eq)]
 struct Card {
     rank: Rank,
     suit: Suit,
@@ -67,10 +67,6 @@ impl fmt::Display for Card {
     }
 }
 impl Card {
-    fn new(rank: Rank, suit: Suit) -> Self {
-        Card { suit, rank }
-    }
-
     fn from_str(str: &str) -> Self {
         let suit = str.chars().nth(1).unwrap();
         let rank = str.chars().nth(0).unwrap();
@@ -105,6 +101,15 @@ impl Card {
             suit: suit_map[&suit],
             rank: rank_map[&rank],
         }
+    }
+
+    fn from_list(l: &[&str]) -> Vec<Card> {
+        let mut out = Vec::new();
+        for s in l {
+            out.push(Card::from_str(s));
+        }
+
+        out
     }
 }
 
@@ -194,6 +199,60 @@ impl CardTracker {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct EvalResult {
+    score: u64,
+    hand_type: HandType,
+}
+
+struct TrieNode {
+    children: HashMap<Card, TrieNode>,
+    end_info: Option<HashMap<u8, EvalResult>>,
+}
+
+impl TrieNode {
+    fn new() -> Self {
+        TrieNode {
+            children: HashMap::new(),
+            end_info: None,
+        }
+    }
+}
+
+struct Trie {
+    root: TrieNode,
+}
+
+impl Trie {
+    fn insert(&mut self, card_seq: Vec<Card>, player_key: u8, result: EvalResult) {
+        let mut curr = &mut self.root;
+
+        for card in card_seq {
+            curr = curr.children.entry(card).or_insert_with(TrieNode::new);
+        }
+
+        if curr.end_info.is_none() {
+            curr.end_info = Some(HashMap::new());
+        }
+
+        curr.end_info.as_mut().unwrap().insert(player_key, result);
+    }
+}
+
+struct Player {
+    hand: [Card; 2],
+    player_key: u8,
+}
+
+impl Player {
+    fn initiate(hand: [&str; 2], player_key: u8) -> Player {
+        Player {
+            hand: Card::from_list(&hand).try_into().unwrap(),
+            player_key,
+        }
+    }
+}
+
 fn main() {
     let mut all_cards: Vec<Card> = Vec::new();
 
@@ -206,54 +265,71 @@ fn main() {
         }
     }
 
-    let mut out: Vec<Vec<usize>> = Vec::new();
+    let players = [
+        Player::initiate(["ah", "2d"], 0),
+        Player::initiate(["4c", "jh"], 0),
+    ];
 
-    let hand = vec![Card::from_str("ah"), Card::from_str("ad")];
+    let player_cards: Vec<Card> = players
+        .iter()
+        .flat_map(|p| p.hand.iter().cloned())
+        .collect();
+
+    let mut out = Vec::new();
+
     all_cards = all_cards
         .iter()
-        .filter(|x| !hand.contains(x))
+        .filter(|x| !player_cards.contains(x))
         .copied()
         .collect();
 
-    comb(&mut Vec::new(), 0, all_cards.len() - 1, 5, &mut out);
+    comb(&mut Vec::new(), 0, all_cards.len(), 5, &mut out);
     let mut hand_counter: HashMap<HandType, u64> = HashMap::new();
 
+    let mut perms: Vec<Vec<usize>> = Vec::new();
+
+    let mut result_trie = Trie {
+        root: TrieNode::new(),
+    };
+
+    perm(&mut Vec::new(), 5, 5, &mut perms);
+
     for c in &out {
-        let cards: Vec<Card> = c.iter().map(|x| all_cards[*x]).collect();
+        for player in &players {
+            let cards: Vec<Card> = c.iter().map(|x| all_cards[*x]).collect();
 
-        let (_, hand_type) = eval(&hand, &cards);
+            let result = eval(&player.hand, &cards);
 
-        *hand_counter.entry(hand_type).or_default() += 1;
+            let _ = perms.iter().map(|p| {
+                result_trie.insert(
+                    p.iter().map(|x| cards[*x]).collect(),
+                    player.player_key,
+                    result,
+                );
+            });
+        }
     }
 
-    println!("{:?}", hand_counter);
-
-    for hand_type in (0..10).map(|n| unsafe { std::mem::transmute::<u8, HandType>(n as u8) }) {
-        println!(
-            "{:?}: {} ({}%)",
-            hand_type,
-            *hand_counter.get(&hand_type).unwrap_or(&0),
-            (*hand_counter.get(&hand_type).unwrap_or(&0) as f64 / out.len() as f64
-                * 100_f64
-                * 100_f64)
-                .round()
-                / 100_f64
-        )
-    }
+    // for hand_type in (0..10).map(|n| unsafe { std::mem::transmute::<u8, HandType>(n as u8) }) {
+    //     println!(
+    //         "{:?}: {} ({}%)",
+    //         hand_type,
+    //         *hand_counter.get(&hand_type).unwrap_or(&0),
+    //         (*hand_counter.get(&hand_type).unwrap_or(&0) as f64 / out.len() as f64
+    //             * 100_f64
+    //             * 100_f64)
+    //             .round()
+    //             / 100_f64
+    //     )
+    // }
 
     // eval(
-    //     &vec![
-    //         Card::from_str("4d"),
-    //         Card::from_str("2d"),
-    //         Card::from_str("3h"),
-    //         Card::from_str("ad"),
-    //         Card::from_str("5d"),
-    //     ],
-    //     &vec![],
+    //     &vec![Card::from_str("ad"), Card::from_str("as")],
+    //     &Card::from_list(&["ah", "kh", "jh", "qh", "th"]),
     // );
 }
 
-fn eval(hand: &Vec<Card>, board: &Vec<Card>) -> (u64, HandType) {
+fn eval(hand: &[Card], board: &Vec<Card>) -> EvalResult {
     let mut comb = hand.to_vec();
     let mut hand_type: HandType = HandType::HighCard;
     let mut best_cards: Vec<Card> = Vec::new();
@@ -292,6 +368,19 @@ fn eval(hand: &Vec<Card>, board: &Vec<Card>) -> (u64, HandType) {
             best_cards.clear();
             best_cards.extend(three);
             best_cards.extend(two);
+        } else if card_tracker.contains_multiple(&[3, 3]) {
+            let three = card_tracker.cards_with_group_of(3, 0);
+            let two_other: Vec<Card> = card_tracker
+                .cards_with_group_of(3, 1)
+                .iter()
+                .take(2)
+                .copied()
+                .collect();
+
+            hand_type = HandType::FullHouse;
+            best_cards.clear();
+            best_cards.extend(three);
+            best_cards.extend(two_other);
         } else {
             // Three of a kind
             let three: Vec<Card> = card_tracker.cards_with_group_of(3, 0);
@@ -396,15 +485,6 @@ fn eval(hand: &Vec<Card>, board: &Vec<Card>) -> (u64, HandType) {
 
                 if straight_start == Rank::Ace {
                     hand_type = HandType::RoyalFlush;
-
-                    println!(
-                        "{}",
-                        best_cards
-                            .iter()
-                            .map(|c| c.to_string())
-                            .collect::<Vec<_>>()
-                            .join(" ")
-                    );
                 } else {
                     hand_type = HandType::StraightFlush;
                 }
@@ -478,12 +558,12 @@ fn eval(hand: &Vec<Card>, board: &Vec<Card>) -> (u64, HandType) {
     // println!(
     //     "{:?} {}",
     //     hand_type,
-    //     best_cards.iter().map(|c| c.to_string()).collect::<Vec<_>>()
+    //     best_cards
+    //         .iter()
+    //         .map(|c| c.to_string())
+    //         .collect::<Vec<_>>()
+    //         .join(" ")
     // );
-
-    if best_cards.len() == 4 {
-        println!("{:?} {:?}", best_cards, hand_type);
-    }
 
     let calc: u64 = 15 * best_cards[4].rank as u64
         + 15_u64.pow(2) * best_cards[3].rank as u64
@@ -492,7 +572,10 @@ fn eval(hand: &Vec<Card>, board: &Vec<Card>) -> (u64, HandType) {
         + 15_u64.pow(5) * best_cards[0].rank as u64
         + 15_u64.pow(6) * hand_type as u64;
 
-    (calc, hand_type)
+    EvalResult {
+        score: calc,
+        hand_type,
+    }
 }
 
 fn comb(curr: &mut Vec<usize>, start: usize, end: usize, n: usize, out: &mut Vec<Vec<usize>>) {
@@ -504,6 +587,19 @@ fn comb(curr: &mut Vec<usize>, start: usize, end: usize, n: usize, out: &mut Vec
     for i in start..end {
         curr.push(i);
         comb(curr, i + 1, end, n, out);
+        curr.pop();
+    }
+}
+
+fn perm(curr: &mut Vec<usize>, end: usize, n: usize, out: &mut Vec<Vec<usize>>) {
+    if curr.len() == n {
+        out.push(curr.clone());
+        return;
+    }
+
+    for i in 0..end {
+        curr.push(i);
+        perm(curr, end, n, out);
         curr.pop();
     }
 }
