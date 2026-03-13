@@ -133,83 +133,67 @@ impl Card {
 
 struct CardTracker {
     internal_cards: Vec<Card>,
-    internal_rank_map: HashMap<Rank, Vec<Card>>,
-    internal_counter: HashMap<u32, Vec<Rank>>,
+    count_ranks: [Vec<Rank>; 5],
 }
 
 impl CardTracker {
     fn from(cards: &[Card]) -> CardTracker {
-        let mut ranks_count_map: HashMap<Rank, Vec<Card>> = HashMap::new();
-
+        let mut rank_counts = [0u8; 13];
         for card in cards {
-            let entry = ranks_count_map.entry(card.rank).or_default();
-            entry.push(*card);
+            rank_counts[card.rank as usize] += 1;
         }
 
-        let mut counts_rank_map: HashMap<u32, Vec<Rank>> = HashMap::new();
-
-        for (rank, cards) in &ranks_count_map {
-            counts_rank_map
-                .entry(cards.len() as u32)
-                .or_default()
-                .push(*rank);
+        let mut count_ranks: [Vec<Rank>; 5] = Default::default();
+        for (rank_idx, &count) in rank_counts.iter().enumerate() {
+            if count > 0 {
+                count_ranks[count as usize]
+                    .push(unsafe { std::mem::transmute::<u8, Rank>(rank_idx as u8) });
+            }
         }
 
-        for ranks in counts_rank_map.values_mut() {
-            ranks.sort_by_key(|b| std::cmp::Reverse(*b as u8));
+        // sort descending — replaces the HashMap sort
+        for v in count_ranks.iter_mut() {
+            v.sort_by_key(|b| std::cmp::Reverse(*b as u8));
         }
 
         CardTracker {
             internal_cards: cards.to_vec(),
-            internal_rank_map: ranks_count_map,
-            internal_counter: counts_rank_map,
+            count_ranks,
         }
-    }
-
-    fn cards_with_group_of(&self, count: u32, nth: usize) -> Vec<Card> {
-        let target_rank = &self.internal_counter.get(&count).unwrap()[nth];
-        self.internal_rank_map.get(target_rank).unwrap().to_vec()
     }
 
     fn contains(&self, count: u32) -> bool {
-        self.internal_counter.contains_key(&count)
+        !self.count_ranks[count as usize].is_empty()
     }
 
     fn contains_multiple(&self, counts: &[u32]) -> bool {
-        let mut tracking_counter = self.internal_counter.clone();
-
-        for count in counts {
-            if !tracking_counter.contains_key(count) {
-                return false;
-            }
-
-            match tracking_counter.get_mut(count) {
-                Some(vec) if !vec.is_empty() => {
-                    vec.pop();
-                }
-                _ => return false,
-            };
+        // no clone needed anymore — just check lengths
+        let mut needed = [0u8; 5];
+        for &c in counts {
+            needed[c as usize] += 1;
         }
-
-        true
+        needed
+            .iter()
+            .enumerate()
+            .all(|(i, &n)| self.count_ranks[i].len() >= n as usize)
     }
 
-    fn get_with_rank(&self, rank: Rank) -> Card {
+    fn cards_with_group_of(&self, count: u32, nth: usize) -> Vec<Card> {
+        let rank = self.count_ranks[count as usize][nth];
         self.internal_cards
             .iter()
             .filter(|c| c.rank == rank)
-            .take(1)
             .copied()
-            .collect::<Vec<_>>()[0]
+            .collect()
     }
 
-    fn cards_without(&self, filter: &Vec<Card>, take: usize) -> Vec<Card> {
+    fn cards_without(&self, filter: &[Card], take: usize) -> Vec<Card> {
         self.internal_cards
             .iter()
             .filter(|x| !filter.contains(x))
             .copied()
             .take(take)
-            .collect::<Vec<Card>>()
+            .collect()
     }
 
     fn filter_suit(&self, suit: &Suit) -> Vec<Card> {
@@ -219,8 +203,15 @@ impl CardTracker {
             .copied()
             .collect()
     }
-}
 
+    fn get_with_rank(&self, rank: Rank) -> Card {
+        self.internal_cards
+            .iter()
+            .find(|c| c.rank == rank)
+            .copied()
+            .unwrap()
+    }
+}
 #[derive(Debug, Clone, Copy)]
 struct EvalResult {
     score: u64,
@@ -228,7 +219,7 @@ struct EvalResult {
 }
 
 struct ResultsManager {
-    results: HashMap<Vec<Card>, HashMap<u8, EvalResult>>,
+    results: HashMap<u64, HashMap<u8, EvalResult>>,
 }
 
 #[derive(Debug)]
@@ -238,6 +229,9 @@ struct AggResult {
     count: u64,
     ties: HashMap<Vec<u8>, u64>,
 }
+fn prefix_mask(prefix_len: usize) -> u64 {
+    (1u64 << (prefix_len * 6)) - 1
+}
 
 impl ResultsManager {
     fn new() -> Self {
@@ -246,7 +240,7 @@ impl ResultsManager {
         }
     }
 
-    fn insert(&mut self, board: Vec<Card>, player_key: u8, result: EvalResult) {
+    fn insert(&mut self, board: u64, player_key: u8, result: EvalResult) {
         let player_map = self.results.entry(board).or_default();
         player_map.insert(player_key, result);
     }
@@ -264,8 +258,11 @@ impl ResultsManager {
         let mut count = 0_u64;
         let mut ties = HashMap::new();
 
-        for (board, result) in &self.results {
-            if !board.starts_with(&cards) {
+        let prefix = encode_board(board);
+        let mask = prefix_mask(board.len());
+
+        for (encoded_board, result) in &self.results {
+            if encoded_board & mask != prefix {
                 continue;
             }
 
@@ -331,6 +328,17 @@ fn clear_screen() {
     print!("\x1B[2J\x1B[1;1H");
 }
 
+fn encode_card(card: &Card) -> u64 {
+    (card.rank as u64) * 4 + (card.suit as u64)
+}
+
+fn encode_board(cards: &[Card]) -> u64 {
+    cards
+        .iter()
+        .enumerate()
+        .fold(0u64, |acc, (i, card)| acc | (encode_card(card) << (i * 6)))
+}
+
 fn main() {
     clear_screen();
 
@@ -346,9 +354,8 @@ fn main() {
     }
 
     let players = [
-        Player::initiate(["8h", "ac"], 0),
-        Player::initiate(["7d", "9h"], 1),
-        Player::initiate(["kc", "jh"], 2),
+        Player::initiate(["kh", "qc"], 0),
+        Player::initiate(["7d", "7h"], 1),
     ];
 
     let player_cards: Vec<Card> = players
@@ -381,7 +388,7 @@ fn main() {
             });
 
             let result = eval(&player.hand, &cards);
-            results_manager.insert(cards, player.player_key, result);
+            results_manager.insert(encode_board(&cards), player.player_key, result);
         }
     }
 
@@ -401,22 +408,21 @@ fn main() {
         ties: HashMap::new(),
     };
 
+    let mut formatted_time: String = String::new();
     loop {
-        let start = Instant::now();
-
         if needs_refresh {
+            let start = Instant::now();
             clear_screen();
-            print!("Aggregating...");
             agg_result = results_manager.agg(&board);
             needs_refresh = false;
+            formatted_time = format!(
+                "Finished in {}s",
+                (start.elapsed().as_millis() as f64 / 10_f64).round() / 100_f64
+            );
         }
 
         clear_screen();
-
-        println!(
-            "Finished in {}s",
-            (start.elapsed().as_millis() as f64 / 10_f64).round() / 100_f64
-        );
+        println!("{}", formatted_time);
 
         println!(
             "{}",
