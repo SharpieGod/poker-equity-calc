@@ -137,6 +137,10 @@ impl CardTracker {
                 .push(*rank);
         }
 
+        for ranks in counts_rank_map.values_mut() {
+            ranks.sort_by_key(|b| std::cmp::Reverse(*b as u8));
+        }
+
         CardTracker {
             internal_cards: cards.to_vec(),
             internal_rank_map: ranks_count_map,
@@ -212,7 +216,7 @@ struct ResultsManager {
 #[derive(Debug)]
 struct AggResult {
     hand_counter: HashMap<u8, HashMap<HandType, u64>>,
-    eq_counter: HashMap<u8, u64>,
+    eq_counter: HashMap<u8, f64>,
 }
 
 impl ResultsManager {
@@ -223,7 +227,7 @@ impl ResultsManager {
     }
 
     fn insert(&mut self, board: Vec<Card>, player_key: u8, result: EvalResult) {
-        let player_map = self.results.entry(board).or_insert_with(HashMap::new);
+        let player_map = self.results.entry(board).or_default();
         player_map.insert(player_key, result);
     }
 
@@ -253,14 +257,14 @@ impl ResultsManager {
                     .or_default() += 1;
             }
 
-            let filtered = result
+            let winners = result
                 .iter()
                 .filter(|p| p.1.score == best_score)
                 .map(|p| p.0)
                 .collect::<Vec<&u8>>();
 
-            if filtered.len() == 1 {
-                *eq_counter.entry(*filtered[0]).or_default() += 1;
+            if winners.len() == 1 {
+                *eq_counter.entry(*winners[0]).or_insert(0_f64) += 1_f64;
             }
         }
 
@@ -314,8 +318,9 @@ fn main() {
     }
 
     let players = [
-        Player::initiate(["ah", "2d"], 0),
-        Player::initiate(["4c", "jh"], 1),
+        Player::initiate(["8h", "ac"], 0),
+        Player::initiate(["7d", "9h"], 1),
+        Player::initiate(["kc", "jh"], 2),
     ];
 
     let player_cards: Vec<Card> = players
@@ -388,11 +393,14 @@ fn main() {
         println!("\n");
 
         for player in &players {
-            let equity = agg_result.eq_counter.get(&player.player_key).unwrap_or(&0);
+            let equity = agg_result
+                .eq_counter
+                .get(&player.player_key)
+                .unwrap_or(&0_f64);
             println!(
                 "{} {}%",
                 player.hand.map(|x| x.to_string()).join(" "),
-                (*equity as f64 / combinations.len() as f64 * 100_f64 * 100_f64).round() / 100_f64
+                (*equity / combinations.len() as f64 * 100_f64 * 100_f64).round() / 100_f64
             );
 
             //         *hand_counter.get(&hand_type).unwrap_or(&0),
@@ -651,15 +659,6 @@ fn eval(hand: &[Card], board: &Vec<Card>) -> EvalResult {
     if hand_type == HandType::HighCard {
         best_cards.extend(comb.iter().take(5));
     }
-    // println!(
-    //     "{:?} {}",
-    //     hand_type,
-    //     best_cards
-    //         .iter()
-    //         .map(|c| c.to_string())
-    //         .collect::<Vec<_>>()
-    //         .join(" ")
-    // );
 
     let calc: u64 = 15 * best_cards[4].rank as u64
         + 15_u64.pow(2) * best_cards[3].rank as u64
