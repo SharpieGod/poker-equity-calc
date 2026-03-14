@@ -354,8 +354,8 @@ fn main() {
     }
 
     let players = [
-        Player::initiate(["kh", "qc"], 0),
-        Player::initiate(["7d", "7h"], 1),
+        Player::initiate(["ah", "ts"], 0),
+        Player::initiate(["6c", "7c"], 1),
     ];
 
     let player_cards: Vec<Card> = players
@@ -409,11 +409,41 @@ fn main() {
     };
 
     let mut formatted_time: String = String::new();
+    let mut char_to_rank: HashMap<char, Rank> = HashMap::new();
+
+    char_to_rank.insert('a', Rank::Ace);
+    char_to_rank.insert('k', Rank::King);
+    char_to_rank.insert('q', Rank::Queen);
+    char_to_rank.insert('j', Rank::Jack);
+    char_to_rank.insert('t', Rank::Ten);
+    char_to_rank.insert('9', Rank::Nine);
+    char_to_rank.insert('8', Rank::Eight);
+    char_to_rank.insert('7', Rank::Seven);
+    char_to_rank.insert('6', Rank::Six);
+    char_to_rank.insert('5', Rank::Five);
+    char_to_rank.insert('4', Rank::Four);
+    char_to_rank.insert('3', Rank::Three);
+    char_to_rank.insert('2', Rank::Two);
+
+    let mut char_to_suit: HashMap<char, Suit> = HashMap::new();
+
+    char_to_suit.insert('h', Suit::Hearts);
+    char_to_suit.insert('d', Suit::Diamonds);
+    char_to_suit.insert('s', Suit::Spades);
+    char_to_suit.insert('c', Suit::Clubs);
+
     loop {
         if needs_refresh {
             let start = Instant::now();
             clear_screen();
-            agg_result = results_manager.agg(&board);
+            let mut sorted_board = board.clone();
+            sorted_board.sort_by(|a, b| {
+                let a_rank = a.rank as u32;
+                let b_rank = b.rank as u32;
+                b_rank.cmp(&a_rank)
+            });
+            agg_result = results_manager.agg(&sorted_board);
+
             needs_refresh = false;
             formatted_time = format!(
                 "Finished in {}s",
@@ -423,7 +453,7 @@ fn main() {
 
         clear_screen();
         println!("{}", formatted_time);
-
+        println!("{:?}", agg_result);
         println!(
             "{}",
             match board
@@ -476,12 +506,13 @@ fn main() {
         }
 
         println!();
-        let mut input;
+        let input = take_input();
 
-        input = take_input();
+        if input == "p" && !board.is_empty() {
+            board.pop();
+            needs_refresh = true;
+        }
 
-        if input == "n" {}
-        if input == "p" {}
         if players
             .iter()
             .map(|p| (p.player_key + 1).to_string())
@@ -520,6 +551,20 @@ fn main() {
             );
 
             take_input();
+        }
+
+        if input.len() == 2
+            && char_to_rank.contains_key(&input.chars().next().unwrap_or_default())
+            && char_to_suit.contains_key(&input.chars().nth(1).unwrap_or_default())
+        {
+            let new_card = Card::from_str(&input);
+
+            if board.contains(&new_card) || player_cards.contains(&new_card) {
+                continue;
+            }
+
+            board.push(new_card);
+            needs_refresh = true;
         }
     }
 
