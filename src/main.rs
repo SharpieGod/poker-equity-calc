@@ -258,11 +258,15 @@ impl ResultsManager {
         let mut count = 0_u64;
         let mut ties = HashMap::new();
 
-        let prefix = encode_board(board);
-        let mask = prefix_mask(board.len());
+        let filter_cards: Vec<u64> = board.iter().map(encode_card).collect();
 
         for (encoded_board, result) in &self.results {
-            if encoded_board & mask != prefix {
+            // check every filter card exists somewhere in the 5 slots
+            let matches = filter_cards
+                .iter()
+                .all(|&card_enc| (0..5).any(|i| (encoded_board >> (i * 6)) & 0x3F == card_enc));
+
+            if !matches {
                 continue;
             }
 
@@ -432,6 +436,7 @@ fn main() {
     char_to_suit.insert('s', Suit::Spades);
     char_to_suit.insert('c', Suit::Clubs);
 
+    let fact = [120, 24, 6, 2, 1];
     loop {
         if needs_refresh {
             let start = Instant::now();
@@ -453,7 +458,7 @@ fn main() {
 
         clear_screen();
         println!("{}", formatted_time);
-        println!("{:?}", agg_result);
+
         println!(
             "{}",
             match board
@@ -467,7 +472,7 @@ fn main() {
             }
         );
 
-        println!("\n");
+        println!();
 
         for player in &players {
             let equity = agg_result
@@ -536,7 +541,6 @@ fn main() {
                 "Player {}: {}\n\n{}",
                 player.player_key + 1,
                 player.hand.map(|x| x.to_string()).join(" "),
-                // 120 is 5 perm 5
                 hand_type_results
                     .iter()
                     .map(|(hand_type, counter)| format!(
@@ -544,7 +548,7 @@ fn main() {
                         format!("{}:", hand_type),
                         (*counter as f64 / agg_result.count as f64 * 100_f64 * 100_f64).round()
                             / 100_f64,
-                        counter * 120
+                        counter * fact[board.len() - 1]
                     ))
                     .collect::<Vec<_>>()
                     .join("\n")
@@ -554,6 +558,7 @@ fn main() {
         }
 
         if input.len() == 2
+            && board.len() < 5
             && char_to_rank.contains_key(&input.chars().next().unwrap_or_default())
             && char_to_suit.contains_key(&input.chars().nth(1).unwrap_or_default())
         {
