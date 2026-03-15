@@ -1,5 +1,10 @@
 use core::fmt;
-use std::{collections::HashMap, io, time::Instant};
+use rand::seq::SliceRandom;
+use std::{
+    collections::HashMap,
+    io::{self, Write},
+    time::Instant,
+};
 
 static CARD_VALUES: [&str; 13] = [
     "2", "3", "4", "5", "6", "7", "8", "9", "T", "J", "Q", "K", "A",
@@ -85,7 +90,7 @@ impl fmt::Display for HandType {
     }
 }
 impl Card {
-    fn from_str(str: &str) -> Self {
+    fn from_str(str: &str) -> Option<Self> {
         let suit = str.chars().nth(1).unwrap();
         let rank = str.chars().nth(0).unwrap();
 
@@ -115,19 +120,28 @@ impl Card {
             m
         };
 
-        Card {
+        if !suit_map.contains_key(&suit) || !rank_map.contains_key(&rank) {
+            return None;
+        }
+
+        Some(Card {
             suit: suit_map[&suit],
             rank: rank_map[&rank],
-        }
+        })
     }
 
-    fn from_list(l: &[&str]) -> Vec<Card> {
+    fn from_list(l: &[&str]) -> Option<Vec<Card>> {
         let mut out = Vec::new();
+
         for s in l {
-            out.push(Card::from_str(s));
+            if let Some(c) = Card::from_str(s) {
+                out.push(c);
+            } else {
+                return None;
+            }
         }
 
-        out
+        Some(out)
     }
 }
 
@@ -222,15 +236,12 @@ struct ResultsManager {
     results: HashMap<u64, HashMap<u8, EvalResult>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct AggResult {
     hand_counter: HashMap<u8, HashMap<HandType, u64>>,
     eq_counter: HashMap<u8, f64>,
     count: u64,
     ties: HashMap<Vec<u8>, u64>,
-}
-fn prefix_mask(prefix_len: usize) -> u64 {
-    (1u64 << (prefix_len * 6)) - 1
 }
 
 impl ResultsManager {
@@ -310,11 +321,15 @@ struct Player {
 }
 
 impl Player {
-    fn initiate(hand: [&str; 2], player_key: u8) -> Player {
-        Player {
-            hand: Card::from_list(&hand).try_into().unwrap(),
-            player_key,
+    fn initiate(hand: [&str; 2], player_key: u8) -> Option<Player> {
+        if let Some(cards) = Card::from_list(&hand) {
+            return Some(Player {
+                hand: cards.try_into().unwrap(),
+                player_key,
+            });
         }
+
+        None
     }
 }
 
@@ -325,7 +340,7 @@ fn take_input() -> String {
         .read_line(&mut input)
         .expect("Failed to read line");
 
-    input.trim().to_string()
+    input.trim().to_lowercase().to_string()
 }
 
 fn clear_screen() {
@@ -343,6 +358,35 @@ fn encode_board(cards: &[Card]) -> u64 {
         .fold(0u64, |acc, (i, card)| acc | (encode_card(card) << (i * 6)))
 }
 
+fn print_rainbow(text: &str) {
+    for (i, ch) in text.chars().enumerate() {
+        let hue = (i * 5) % 360;
+        let (r, g, b) = hsl_to_rgb(hue as f32, 0.5, 0.5);
+        print!("\x1b[38;2;{r};{g};{b}m{ch}");
+    }
+    print!("\x1b[0m");
+    println!();
+}
+
+fn hsl_to_rgb(h: f32, s: f32, l: f32) -> (u8, u8, u8) {
+    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
+    let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
+    let m = l - c / 2.0;
+    let (r, g, b) = match h as u32 {
+        0..=59 => (c, x, 0.0),
+        60..=119 => (x, c, 0.0),
+        120..=179 => (0.0, c, x),
+        180..=239 => (0.0, x, c),
+        240..=299 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+    (
+        ((r + m) * 255.0) as u8,
+        ((g + m) * 255.0) as u8,
+        ((b + m) * 255.0) as u8,
+    )
+}
+
 fn main() {
     clear_screen();
 
@@ -357,15 +401,125 @@ fn main() {
         }
     }
 
-    let players = [
-        Player::initiate(["ah", "ts"], 0),
-        Player::initiate(["6c", "7c"], 1),
-    ];
+    let mut player_count: u8;
+    let mut player_cards: Vec<Card> = Vec::new();
 
-    let player_cards: Vec<Card> = players
-        .iter()
-        .flat_map(|p| p.hand.iter().cloned())
-        .collect();
+    clear_screen();
+
+    loop {
+        print_rainbow(
+            r"            ____       _               _____            _ _         
+           |  _ \ ___ | | _____ _ __  | ____|__ _ _   _(_) |_ _   _ 
+           | |_) / _ \| |/ / _ \ '__| |  _| / _` | | | | | __| | | |
+           |  __/ (_) |   <  __/ |    | |__| (_| | |_| | | |_| |_| |
+           |_|   \___/|_|\_\___|_|    |_____\__, |\__,_|_|\__|\__, |
+                                               |_|            |___/ 
+                  ____      _            _       _             
+                 / ___|__ _| | ___ _   _| | __ _| |_ ___  _ __ 
+                | |   / _` | |/ __| | | | |/ _` | __/ _ \| '__|
+                | |__| (_| | | (__| |_| | | (_| | || (_) | |   
+                 \____\__,_|_|\___|\__,_|_|\__,_|\__\___/|_|   
+                 
+                 ",
+        );
+        print!("Enter player number: ");
+
+        io::stdout().flush().unwrap();
+        let input = take_input();
+
+        if let Ok(n) = input.parse::<u8>()
+            && n > 0
+            && n <= 10
+        {
+            player_count = n;
+            break;
+        }
+
+        clear_screen();
+    }
+    clear_screen();
+
+    let mut players: Vec<Player> = vec![];
+    let mut rng = rand::thread_rng();
+
+    for player_key in 0..player_count {
+        loop {
+            println!(
+                "{}\n",
+                (0..player_count)
+                    .map(|n| (
+                        n,
+                        match players.get(n as usize) {
+                            Some(p) => Some(p.hand),
+                            _ => None,
+                        }
+                    ))
+                    .map(|p| format!(
+                        "player {}: {}",
+                        p.0 + 1,
+                        match p.1 {
+                            Some(hand) => hand.map(|c| c.to_string()).join(" "),
+                            _ => "".to_string(),
+                        }
+                    ))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            );
+
+            println!(
+                "Enter hand for player {} (h for help, r for random): ",
+                player_key + 1
+            );
+
+            let input = take_input();
+            println!("{}", input);
+
+            if input == "h" {
+                clear_screen();
+                println!("Ranks are: 1 2 3 4 5 6 7 8 9 t j q k a");
+                println!("Suits are: s h d c");
+                println!("\nPlayer hand consits of: Rank Suit space Rank Suit\n");
+                println!("Pocket Aces: ah ad");
+                println!("Jack Ten Suited: jc tc");
+                println!("Seven Deuce: 7c 2s");
+                println!("\nPress enter to continue");
+                take_input();
+            } else if input == "r" {
+                let hand: [Card; 2] = all_cards
+                    .iter()
+                    .filter(|c| !player_cards.contains(*c))
+                    .copied()
+                    .collect::<Vec<Card>>()
+                    .choose_multiple(&mut rng, 2)
+                    .copied()
+                    .collect::<Vec<_>>()
+                    .try_into()
+                    .unwrap();
+
+                player_cards.extend_from_slice(&hand);
+                players.push(Player { hand, player_key });
+
+                break;
+            } else if let Some(player) = Player::initiate(
+                input
+                    .split_whitespace()
+                    .take(2)
+                    .collect::<Vec<_>>()
+                    .try_into()
+                    .unwrap_or_default(),
+                player_key,
+            ) && player.hand.iter().all(|c| !player_cards.contains(c))
+            {
+                player_cards.extend_from_slice(&player.hand);
+                players.push(player);
+
+                break;
+            }
+
+            clear_screen();
+        }
+        clear_screen();
+    }
 
     let mut combinations = Vec::new();
 
@@ -412,35 +566,17 @@ fn main() {
         ties: HashMap::new(),
     };
 
-    let mut formatted_time: String = String::new();
-    let mut char_to_rank: HashMap<char, Rank> = HashMap::new();
-
-    char_to_rank.insert('a', Rank::Ace);
-    char_to_rank.insert('k', Rank::King);
-    char_to_rank.insert('q', Rank::Queen);
-    char_to_rank.insert('j', Rank::Jack);
-    char_to_rank.insert('t', Rank::Ten);
-    char_to_rank.insert('9', Rank::Nine);
-    char_to_rank.insert('8', Rank::Eight);
-    char_to_rank.insert('7', Rank::Seven);
-    char_to_rank.insert('6', Rank::Six);
-    char_to_rank.insert('5', Rank::Five);
-    char_to_rank.insert('4', Rank::Four);
-    char_to_rank.insert('3', Rank::Three);
-    char_to_rank.insert('2', Rank::Two);
-
-    let mut char_to_suit: HashMap<char, Suit> = HashMap::new();
-
-    char_to_suit.insert('h', Suit::Hearts);
-    char_to_suit.insert('d', Suit::Diamonds);
-    char_to_suit.insert('s', Suit::Spades);
-    char_to_suit.insert('c', Suit::Clubs);
-
     let fact = [120, 24, 6, 2, 1, 1];
+    let mut base_agg = None;
     loop {
-        if needs_refresh {
-            let start = Instant::now();
-            clear_screen();
+        clear_screen();
+        if needs_refresh
+            && board.is_empty()
+            && let Some(agg) = base_agg.clone()
+        {
+            agg_result = agg;
+            needs_refresh = false;
+        } else if needs_refresh {
             let mut sorted_board = board.clone();
             sorted_board.sort_by(|a, b| {
                 let a_rank = a.rank as u32;
@@ -449,16 +585,12 @@ fn main() {
             });
             agg_result = results_manager.agg(&sorted_board);
 
+            if board.is_empty() {
+                base_agg = Some(agg_result.clone());
+            }
+
             needs_refresh = false;
-            formatted_time = format!(
-                "Finished in {}s",
-                (start.elapsed().as_millis() as f64 / 10_f64).round() / 100_f64
-            );
         }
-
-        clear_screen();
-        println!("{}", formatted_time);
-
         println!(
             "{}",
             match board
@@ -467,7 +599,7 @@ fn main() {
                 .collect::<Vec<_>>()
                 .join(" ")
             {
-                s if s.is_empty() => "No board yet.".to_string(),
+                s if s.is_empty() => "Board is empty.".to_string(),
                 s => s,
             }
         );
@@ -480,7 +612,8 @@ fn main() {
                 .get(&player.player_key)
                 .unwrap_or(&0_f64);
             println!(
-                "{}: {} {}%",
+                "({}) player {}: {} {}%",
+                player.player_key + 1,
                 player.player_key + 1,
                 player.hand.map(|x| x.to_string()).join(" "),
                 (*equity / agg_result.count as f64 * 100_f64 * 100_f64).round() / 100_f64
@@ -510,8 +643,35 @@ fn main() {
             );
         }
 
-        println!();
+        println!("\n(p to pop, r for random, h for help):");
         let input = take_input();
+
+        if input == "h" {
+            clear_screen();
+            println!("Ranks are: 1 2 3 4 5 6 7 8 9 t j q k a");
+            println!("Suits are: s h d c");
+            println!("");
+            println!("Enter a card with format: Rank Suit (no spaces) to add it to the board.");
+            print!("\nAce of Hearts: ah\n3 of Clubs: 3c\nTen of Spades: ts");
+            println!("Enter player number to view made hand breakdown.");
+            println!("\nPress enter to continue");
+            take_input();
+            continue;
+        }
+
+        if input == "r" && board.len() < 5 {
+            let new_card = all_cards
+                .iter()
+                .filter(|c| !board.contains(c))
+                .copied()
+                .collect::<Vec<_>>()
+                .choose(&mut rng)
+                .unwrap()
+                .clone();
+
+            board.push(new_card);
+            needs_refresh = true;
+        }
 
         if input == "p" && !board.is_empty() {
             board.pop();
@@ -557,39 +717,19 @@ fn main() {
             take_input();
         }
 
-        if input.len() == 2
-            && board.len() < 5
-            && char_to_rank.contains_key(&input.chars().next().unwrap_or_default())
-            && char_to_suit.contains_key(&input.chars().nth(1).unwrap_or_default())
-        {
+        if input.len() == 2 && board.len() < 5 {
             let new_card = Card::from_str(&input);
 
-            if board.contains(&new_card) || player_cards.contains(&new_card) {
-                continue;
-            }
+            if let Some(c) = new_card {
+                if board.contains(&c) || player_cards.contains(&c) {
+                    continue;
+                }
 
-            board.push(new_card);
-            needs_refresh = true;
+                board.push(c);
+                needs_refresh = true;
+            }
         }
     }
-
-    // for hand_type in (0..10).map(|n| unsafe { std::mem::transmute::<u8, HandType>(n as u8) }) {
-    //     println!(
-    //         "{:?}: {} ({}%)",
-    //         hand_type,
-    //         *hand_counter.get(&hand_type).unwrap_or(&0),
-    //         (*hand_counter.get(&hand_type).unwrap_or(&0) as f64 / out.len() as f64
-    //             * 100_f64
-    //             * 100_f64)
-    //             .round()
-    //             / 100_f64
-    //     )
-    // }
-
-    // eval(
-    //     &vec![Card::from_str("ad"), Card::from_str("as")],
-    //     &Card::from_list(&["ah", "kh", "jh", "qh", "th"]),
-    // );
 }
 
 fn eval(hand: &[Card], board: &Vec<Card>) -> EvalResult {
