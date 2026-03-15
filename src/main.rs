@@ -422,7 +422,7 @@ fn main() {
                  
                  ",
         );
-        print!("Enter player number: ");
+        print!("Enter number of players: ");
 
         io::stdout().flush().unwrap();
         let input = take_input();
@@ -652,7 +652,7 @@ fn main() {
             println!("Suits are: s h d c");
             println!("");
             println!("Enter a card with format: Rank Suit (no spaces) to add it to the board.");
-            print!("\nAce of Hearts: ah\n3 of Clubs: 3c\nTen of Spades: ts");
+            println!("\nAce of Hearts: ah\n3 of Clubs: 3c\nTen of Spades: ts");
             println!("Enter player number to view made hand breakdown.");
             println!("\nPress enter to continue");
             take_input();
@@ -698,7 +698,7 @@ fn main() {
 
             hand_type_results.sort_by(|a, b| a.1.cmp(&b.1).reverse());
             println!(
-                "Player {}: {}\n\n{}",
+                "Hand breakdown for player {}: {}\n\n{}",
                 player.player_key + 1,
                 player.hand.map(|x| x.to_string()).join(" "),
                 hand_type_results
@@ -713,6 +713,8 @@ fn main() {
                     .collect::<Vec<_>>()
                     .join("\n")
             );
+
+            println!("\nPress enter to continue");
 
             take_input();
         }
