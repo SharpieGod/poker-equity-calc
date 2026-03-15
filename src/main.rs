@@ -436,7 +436,7 @@ fn main() {
     char_to_suit.insert('s', Suit::Spades);
     char_to_suit.insert('c', Suit::Clubs);
 
-    let fact = [120, 24, 6, 2, 1];
+    let fact = [120, 120, 24, 6, 2, 1];
     loop {
         if needs_refresh {
             let start = Instant::now();
@@ -548,7 +548,7 @@ fn main() {
                         format!("{}:", hand_type),
                         (*counter as f64 / agg_result.count as f64 * 100_f64 * 100_f64).round()
                             / 100_f64,
-                        counter * fact[board.len() - 1]
+                        counter * fact[board.len()]
                     ))
                     .collect::<Vec<_>>()
                     .join("\n")
