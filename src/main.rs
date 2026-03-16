@@ -91,8 +91,8 @@ impl fmt::Display for HandType {
 }
 impl Card {
     fn from_str(str: &str) -> Option<Self> {
-        let suit = str.chars().nth(1).unwrap();
-        let rank = str.chars().nth(0).unwrap();
+        let suit = str.chars().nth(1).unwrap_or_default();
+        let rank = str.chars().nth(0).unwrap_or_default();
 
         let suit_map: HashMap<char, Suit> = {
             let mut m = HashMap::new();
@@ -336,9 +336,7 @@ impl Player {
 fn take_input() -> String {
     let mut input = String::new();
 
-    io::stdin()
-        .read_line(&mut input)
-        .expect("Failed to read line");
+    io::stdin().read_line(&mut input).unwrap_or_default();
 
     input.trim().to_lowercase().to_string()
 }
@@ -429,7 +427,7 @@ fn main() {
 
         if let Ok(n) = input.parse::<u8>()
             && n > 0
-            && n <= 10
+            && n <= 23
         {
             player_count = n;
             break;
@@ -444,6 +442,7 @@ fn main() {
 
     for player_key in 0..player_count {
         loop {
+            clear_screen();
             println!(
                 "{}\n",
                 (0..player_count)
@@ -455,7 +454,7 @@ fn main() {
                         }
                     ))
                     .map(|p| format!(
-                        "player {}: {}",
+                        "player {:>2}: {}",
                         p.0 + 1,
                         match p.1 {
                             Some(hand) => hand.map(|c| c.to_string()).join(" "),
@@ -472,7 +471,10 @@ fn main() {
             );
 
             let input = take_input();
-            println!("{}", input);
+
+            if input.is_empty() {
+                continue;
+            }
 
             if input == "h" {
                 clear_screen();
