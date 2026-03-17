@@ -399,7 +399,7 @@ fn main() {
         }
     }
 
-    let mut player_count: u8;
+    let player_count: u8;
     let mut player_cards: Vec<Card> = Vec::new();
 
     clear_screen();
@@ -633,7 +633,7 @@ fn main() {
                     String::new()
                 } else {
                     format!(
-                        "({})",
+                        " ({})",
                         tie.0
                             .iter()
                             .map(|p| (p + 1).to_string())
