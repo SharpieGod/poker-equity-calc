@@ -427,6 +427,7 @@ fn main() {
 
         if let Ok(n) = input.parse::<u8>()
             && n > 0
+            // 23 is max number of players (52 - 5 community cards) // 2 = 23
             && n <= 23
         {
             player_count = n;
@@ -446,15 +447,9 @@ fn main() {
             println!(
                 "{}\n",
                 (0..player_count)
-                    .map(|n| (
-                        n,
-                        match players.get(n as usize) {
-                            Some(p) => Some(p.hand),
-                            _ => None,
-                        }
-                    ))
+                    .map(|n| (n, players.get(n as usize).map(|p| p.hand)))
                     .map(|p| format!(
-                        "player {:>2}: {}",
+                        "player {}: {}",
                         p.0 + 1,
                         match p.1 {
                             Some(hand) => hand.map(|c| c.to_string()).join(" "),
@@ -568,6 +563,7 @@ fn main() {
         ties: HashMap::new(),
     };
 
+    // Ways to arrange group of 5..=0 to count total amount of permutations without computing them
     let fact = [120, 24, 6, 2, 1, 1];
     let mut base_agg = None;
     loop {
